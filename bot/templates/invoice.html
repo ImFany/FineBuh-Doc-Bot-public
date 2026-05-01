@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<style>
+@page { size: A4; margin: 15mm 20mm 15mm 20mm; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+  font-size: 9pt;
+  color: #000;
+  line-height: 1.3;
+}
+
+/* ───── Банковский заголовок ───── */
+.bank-header {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8pt;
+}
+.bank-header td {
+  border: 1px solid #000;
+  padding: 2pt 4pt;
+  vertical-align: middle;
+}
+.bank-header .cell-name {
+  width: 60%;
+  font-size: 8pt;
+}
+.bank-header .cell-label {
+  width: 10%;
+  font-size: 7pt;
+  text-align: center;
+  border-left: none;
+}
+.bank-header .cell-value {
+  width: 30%;
+  font-size: 8pt;
+  border-left: 1px solid #000;
+}
+.bank-header .cell-hint {
+  font-size: 7pt;
+  color: #555;
+  border-top: none;
+}
+
+/* ───── Заголовок счёта ───── */
+h1.invoice-title {
+  font-size: 14pt;
+  font-weight: bold;
+  text-align: center;
+  margin: 10pt 0 6pt 0;
+}
+.divider-double {
+  border: none;
+  border-top: 3px double #000;
+  margin: 0 0 6pt 0;
+}
+
+/* ───── Реквизиты сторон ───── */
+.parties-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 6pt;
+}
+.parties-table td {
+  border: 1px solid #000;
+  padding: 3pt 5pt;
+  vertical-align: top;
+}
+.parties-table .label-cell {
+  width: 25%;
+  font-weight: bold;
+  font-size: 8pt;
+}
+.parties-table .value-cell {
+  font-size: 8.5pt;
+}
+.basis-row td {
+  border-top: none;
+}
+
+/* ───── Таблица товаров ───── */
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6pt;
+  margin-bottom: 6pt;
+}
+.items-table th {
+  border: 1px solid #000;
+  padding: 3pt 4pt;
+  text-align: center;
+  font-size: 8pt;
+  font-weight: bold;
+  background: #f2f2f2;
+}
+.items-table td {
+  border: 1px solid #000;
+  padding: 3pt 4pt;
+  font-size: 8.5pt;
+  vertical-align: middle;
+}
+.items-table .col-num   { width: 6%;  text-align: center; }
+.items-table .col-name  { width: 42%; }
+.items-table .col-qty   { width: 9%;  text-align: center; }
+.items-table .col-unit  { width: 7%;  text-align: center; }
+.items-table .col-price { width: 18%; text-align: right;  }
+.items-table .col-sum   { width: 18%; text-align: right;  }
+
+/* ───── Итоги ───── */
+.totals {
+  width: 100%;
+  border-collapse: collapse;
+}
+.totals td {
+  padding: 2pt 4pt;
+  font-size: 9pt;
+}
+.totals .lbl { text-align: right; width: 75%; }
+.totals .val { text-align: right; font-weight: bold; width: 25%; padding-right: 10pt; }
+.total-final td { font-size: 10pt; }
+
+/* ───── Подвал ───── */
+.summary { font-size: 9pt; margin-top: 6pt; }
+.amount-words { font-weight: bold; font-size: 9.5pt; margin-top: 3pt; }
+.payment-info { margin-top: 8pt; font-size: 8.5pt; line-height: 1.5; }
+.signature-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14pt;
+  font-size: 9pt;
+}
+.sig-line { display: inline-block; width: 120pt; border-bottom: 1px solid #000; }
+</style>
+</head>
+<body>
+
+<!-- ════ Банковский заголовок ════ -->
+<table class="bank-header">
+  <tr>
+    <td class="cell-name" rowspan="2">{{ seller.SELLER_BANK_NAME }}</td>
+    <td class="cell-label">БИК</td>
+    <td class="cell-value">{{ seller.SELLER_BIK }}</td>
+  </tr>
+  <tr>
+    <td class="cell-label">Сч. №</td>
+    <td class="cell-value">{{ seller.SELLER_KS }}</td>
+  </tr>
+  <tr>
+    <td class="cell-name cell-hint">Банк получателя</td>
+    <td colspan="2" style="border-top:none;"></td>
+  </tr>
+  <tr>
+    <td class="cell-name">ИНН {{ seller.SELLER_INN }}&nbsp;&nbsp;КПП</td>
+    <td class="cell-label">Сч. №</td>
+    <td class="cell-value">{{ seller.SELLER_RS }}</td>
+  </tr>
+  <tr>
+    <td class="cell-name">{{ seller.SELLER_NAME }}</td>
+    <td colspan="2" style="border-top:none;"></td>
+  </tr>
+  <tr>
+    <td class="cell-name cell-hint">Получатель</td>
+    <td colspan="2" style="border-top:none;"></td>
+  </tr>
+</table>
+
+<!-- ════ Заголовок ════ -->
+<h1 class="invoice-title">Счет на оплату № {{ doc_number }} от {{ doc_date }}</h1>
+<hr class="divider-double">
+
+<!-- ════ Стороны ════ -->
+<table class="parties-table">
+  <tr>
+    <td class="label-cell">Поставщик<br>(Исполнитель):</td>
+    <td class="value-cell">
+      <strong>{{ seller.SELLER_NAME }}, ИНН {{ seller.SELLER_INN }}, {{ seller.SELLER_ADDRESS }}</strong>
+    </td>
+  </tr>
+  <tr>
+    <td class="label-cell">Покупатель<br>(Заказчик):</td>
+    <td class="value-cell">
+      <strong>{{ buyer.name }}{% if buyer.inn %}, ИНН {{ buyer.inn }}{% endif %}{% if buyer.kpp %}, КПП {{ buyer.kpp }}{% endif %}{% if buyer.address %}, {{ buyer.address }}{% endif %}</strong>
+    </td>
+  </tr>
+  <tr class="basis-row">
+    <td class="label-cell">Основание:</td>
+    <td class="value-cell">{{ basis }}</td>
+  </tr>
+</table>
+
+<!-- ════ Товары ════ -->
+<table class="items-table">
+  <thead>
+    <tr>
+      <th class="col-num">№</th>
+      <th class="col-name">Товары (работы, услуги)</th>
+      <th class="col-qty">Кол-во</th>
+      <th class="col-unit">Ед.</th>
+      <th class="col-price">Цена</th>
+      <th class="col-sum">Сумма</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td class="col-num">{{ loop.index }}</td>
+      <td class="col-name">{{ item.name }}</td>
+      <td class="col-qty">{{ item.qty if item.qty != '' else '' }}</td>
+      <td class="col-unit">{{ item.unit }}</td>
+      <td class="col-price">{{ "%.2f"|format(item.price|float) }}</td>
+      <td class="col-sum">{{ "%.2f"|format(item.total_with_vat|float) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- ════ Итоги ════ -->
+<table class="totals">
+  <tr>
+    <td class="lbl">Итого:</td>
+    <td class="val">{{ "%.2f"|format(total_incl|float) }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">В том числе НДС {{ seller.VAT_LABEL }}:</td>
+    <td class="val">{{ "%.2f"|format(total_vat|float) }}</td>
+  </tr>
+  <tr class="total-final">
+    <td class="lbl"><strong>Всего к оплате:</strong></td>
+    <td class="val"><strong>{{ "%.2f"|format(total_incl|float) }}</strong></td>
+  </tr>
+</table>
+
+<!-- ════ Подвал ════ -->
+<div class="summary">
+  Всего наименований {{ item_count }}, на сумму {{ "%.2f"|format(total_incl|float) }} руб.
+</div>
+<div class="amount-words">{{ total_words }}</div>
+
+<div class="payment-info">
+  Оплатить не позднее {{ payment_date }}<br>
+  Оплата данного счета означает согласие с условиями поставки товара.<br>
+  Уведомление об оплате обязательно, в противном случае не гарантируется наличие товара на складе.<br>
+  Товар отпускается по факту прихода денег на р/с Поставщика, самовывозом, при наличии доверенности и паспорта.
+</div>
+
+<div style="margin-top:16pt; display:flex; justify-content:space-between; align-items:flex-end;">
+  <span><strong>Предприниматель</strong></span>
+  <span class="sig-line">&nbsp;</span>
+  <span>{{ seller.SELLER_SIGNATURE }}</span>
+</div>
+
+</body>
+</html>

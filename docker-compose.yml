@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    container_name: docflow_bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Персистентные данные: БД и сгенерированные файлы
+      - ./bot/data:/app/bot/data
+      - ./bot/output:/app/bot/output
+      # Шаблоны (можно редактировать без пересборки образа)
+      - ./bot/templates:/app/bot/templates
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
