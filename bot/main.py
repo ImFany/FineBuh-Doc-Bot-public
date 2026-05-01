@@ -1108,14 +1108,23 @@ async def cmd_edit_package(message: Message, state: FSMContext) -> None:
             return
         lines = ["📦 *Последние пакеты:*\n"]
         for p in packages:
-            inn   = p.get('client_inn') or '—'
-            dt    = (p.get('created_at') or '')[:10]
+            inn = p.get('client_inn') or '—'
+            dt  = (p.get('created_at') or '')[:10]
             try:
                 d    = json.loads(p['json_data'])
-                buyer_name = d.get('buyer', {}).get('name', '') or inn
+                buyer = d.get('buyer', {})
+                inn   = buyer.get('inn') or inn
+                name  = buyer.get('name', '') or ''
+                # «Индивидуальный предприниматель» → «ИП»
+                name = re.sub(
+                    r'индивидуальный\s+предприниматель\s*',
+                    'ИП ', name, flags=re.IGNORECASE
+                ).strip()
+                # Оставляем только первые 20 символов имени
+                label = f"{name[:20]} | ИНН {inn}" if name else f"ИНН {inn}"
             except Exception:
-                buyer_name = inn
-            lines.append(f"`#{p['id']}` {dt} — {buyer_name[:35]}")
+                label = f"ИНН {inn}"
+            lines.append(f"`#{p['id']}` {dt} — {label}")
         lines.append("\nИспользование: `/edit_package <id>`")
         await message.reply('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
         return
