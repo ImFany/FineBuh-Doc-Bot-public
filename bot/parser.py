@@ -183,6 +183,21 @@ async def _gemini_generate(client, prompt: str,
 
 # ─────────────────────────── Gemini: items ────────────────────────
 
+def _safe_parse_json(raw: str) -> dict:
+    """Robustly parse JSON from Gemini response, handling code fences and trailing data."""
+    text = raw.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```\s*$', '', text)
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        obj, _ = decoder.raw_decode(text)
+        return obj
+
+
 async def _parse_gemini(text: str, api_key: str) -> ParsedInvoice:
     try:
         client = _get_gemini_client(api_key)
@@ -198,7 +213,7 @@ async def _parse_gemini(text: str, api_key: str) -> ParsedInvoice:
             "Текст:\n" + text
         )
         raw = await _gemini_generate(client, prompt)
-        data = json.loads(raw)
+        data = _safe_parse_json(raw)
 
         result = ParsedInvoice()
         result.buyer_inn = data.get("buyer_inn", "")
@@ -418,7 +433,7 @@ async def parse_buyer_card_from_image(image_bytes: bytes, api_key: str) -> dict:
             'Если поле не найдено — пустая строка.'
         )
         raw = await _gemini_generate(client, prompt, image_bytes=image_bytes)
-        return json.loads(raw)
+        return _safe_parse_json(raw)
     except Exception as e:
         log.warning("Gemini image parse error: %s", e)
         return {}
@@ -445,7 +460,7 @@ async def parse_buyer_card(text: str, api_key: str = '') -> dict:
                 f'Текст:\n{text[:3000]}'
             )
             raw = await _gemini_generate(client, prompt)
-            data = json.loads(raw)
+            data = _safe_parse_json(raw)
             # Дополняем regex если Gemini что-то пропустил
             regex = _parse_buyer_card_regex(text)
             for k, v in regex.items():
