@@ -815,12 +815,6 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
         b = generate_invoice_pdf(gen_data)
         media.append(InputMediaDocument(
             media=BufferedInputFile(b, f"Счёт_{doc_number}.pdf"),
-            caption=(f"📦 *Пакет {doc_number}*\n"
-                     f"📄 Счёт на оплату\n"
-                     f"📄 УПД Статус 1\n"
-                     f"📝 Договор поставки\n"
-                     f"🗂 XML для ЭДО"),
-            parse_mode=ParseMode.MARKDOWN,
         ))
     except Exception as e:
         log.exception("Invoice PDF error")
@@ -874,7 +868,22 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
     if errors:
         await message.answer("⚠️ Ошибки при генерации:\n" + '\n'.join(errors))
 
-    # ── Кнопки для скачивания отдельных файлов ──
+    # ── Сохранение в БД ──
+    pkg_id = None
+    try:
+        user_id = from_user_id or (message.from_user.id if message.from_user else 0)
+        total   = sum(float(i['price']) * float(i.get('qty') or 1) for i in items) + float(delivery)
+        db.save_invoice(doc_number, serial, buyer.get('inn', ''), items,
+                        float(delivery), total, message.chat.id, user_id)
+        if buyer.get('inn'):
+            db.upsert_buyer(buyer)
+        pkg_data = {'items': items, 'buyer': buyer, 'delivery': float(delivery)}
+        pkg_id   = db.save_package(user_id, buyer.get('inn', ''), pkg_data)
+    except Exception as e:
+        log.exception("DB save error: %s", e)
+
+    # ── Итоговое сообщение: кнопки файлов + пакет ──
+    kb_rows = []
     if file_ids:
         _file_cache[doc_number] = file_ids
         btn_map = {
@@ -891,36 +900,19 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
                     row1.append(btn)
                 else:
                     row2.append(btn)
-        kb_rows = []
         if row1:
             kb_rows.append(row1)
         if row2:
             kb_rows.append(row2)
-        if kb_rows:
-            await message.answer(
-                f"📦 *Пакет {doc_number}* — скачать отдельно:",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
-            )
 
-    # ── Сохранение в БД ──
-    try:
-        user_id = from_user_id or (message.from_user.id if message.from_user else 0)
-        total   = sum(float(i['price']) * float(i.get('qty') or 1) for i in items) + float(delivery)
-        db.save_invoice(doc_number, serial, buyer.get('inn', ''), items,
-                        float(delivery), total, message.chat.id, user_id)
-        if buyer.get('inn'):
-            db.upsert_buyer(buyer)
-
-        # Сохраняем пакет для возможности повторного использования
-        pkg_data = {'items': items, 'buyer': buyer, 'delivery': float(delivery)}
-        pkg_id   = db.save_package(user_id, buyer.get('inn', ''), pkg_data)
-        await message.answer(
-            f"💾 Пакет сохранён `#{pkg_id}` — для повторной генерации: `/edit_package {pkg_id}`",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    except Exception as e:
-        log.exception("DB save error: %s", e)
+    summary = f"📦 *Пакет {doc_number}*"
+    if pkg_id:
+        summary += f" (#{pkg_id})\n`/edit_package {pkg_id}` — повторная генерация"
+    await message.answer(
+        summary,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
