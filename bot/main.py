@@ -288,7 +288,7 @@ async def handle_reply_to_bot(message: Message, state: FSMContext) -> None:
 _not_cmd = ~F.text.startswith('/')
 
 
-@router.message(InvoiceForm.items, _not_cmd)
+@router.message(InvoiceForm.items, F.text, _not_cmd)
 async def fsm_items(message: Message, state: FSMContext) -> None:
     text             = _strip_mention(message.text or '')
 
@@ -300,6 +300,8 @@ async def fsm_items(message: Message, state: FSMContext) -> None:
         await message.reply(error_msg)
         return
 
+    wait_msg = await message.reply("Обрабатываю позиции...")
+
     items_text, buyer_text = _split_items_buyer(text)
     parsed = await parse_invoice_text(items_text or text, config.GEMINI_API_KEY)
 
@@ -308,16 +310,15 @@ async def fsm_items(message: Message, state: FSMContext) -> None:
                                                    max_price=config.MAX_PRICE_PER_ITEM,
                                                    max_items=config.MAX_ITEMS_COUNT)
     if not is_valid:
-        await message.reply(f"Ошибка парсинга: {error_msg}\n\n_Попробуйте переформулировать запрос._",
-                           parse_mode=ParseMode.MARKDOWN)
+        await wait_msg.edit_text(
+            f"Ошибка парсинга: {error_msg}\n\nПопробуйте переформулировать запрос.")
         return
 
     if not parsed.items:
-        await message.reply(
-            "Не распознал. Пример:\n`Кабель ВВГ 50 м 15000 доставка 500`",
-            parse_mode=ParseMode.MARKDOWN,
-        )
+        await wait_msg.edit_text(
+            "Не распознал. Пример:\nКабель ВВГ 50 м 15000 доставка 500")
         return
+    await wait_msg.delete()
     await state.update_data(items=_items_from_parsed(parsed.items),
                             delivery=float(parsed.delivery))
 
@@ -341,7 +342,7 @@ async def fsm_items(message: Message, state: FSMContext) -> None:
 #  FSM — ИНН покупателя
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(InvoiceForm.buyer_inn, _not_cmd)
+@router.message(InvoiceForm.buyer_inn, F.text, _not_cmd)
 async def fsm_buyer_inn(message: Message, state: FSMContext) -> None:
     text = _strip_mention(message.text or '').strip()
 
@@ -391,7 +392,7 @@ async def fsm_buyer_inn(message: Message, state: FSMContext) -> None:
 #  FSM — данные покупателя
 # ═══════════════════════════════════════════════════════════════
 
-@router.message(InvoiceForm.buyer_name, _not_cmd)
+@router.message(InvoiceForm.buyer_name, F.text, _not_cmd)
 async def fsm_buyer_name(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     buyer = data.get('buyer', {})
@@ -401,7 +402,7 @@ async def fsm_buyer_name(message: Message, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.buyer_kpp)
 
 
-@router.message(InvoiceForm.buyer_kpp, _not_cmd)
+@router.message(InvoiceForm.buyer_kpp, F.text, _not_cmd)
 async def fsm_buyer_kpp(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     buyer = data.get('buyer', {})
@@ -412,7 +413,7 @@ async def fsm_buyer_kpp(message: Message, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.buyer_address)
 
 
-@router.message(InvoiceForm.buyer_address, _not_cmd)
+@router.message(InvoiceForm.buyer_address, F.text, _not_cmd)
 async def fsm_buyer_address(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     buyer = data.get('buyer', {})
@@ -422,7 +423,7 @@ async def fsm_buyer_address(message: Message, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.buyer_director)
 
 
-@router.message(InvoiceForm.buyer_director, _not_cmd)
+@router.message(InvoiceForm.buyer_director, F.text, _not_cmd)
 async def fsm_buyer_director(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     buyer = data.get('buyer', {})
@@ -437,7 +438,7 @@ async def fsm_buyer_director(message: Message, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.buyer_bank)
 
 
-@router.message(InvoiceForm.buyer_bank, _not_cmd)
+@router.message(InvoiceForm.buyer_bank, F.text, _not_cmd)
 async def fsm_buyer_bank(message: Message, state: FSMContext) -> None:
     data  = await state.get_data()
     buyer = data.get('buyer', {})
@@ -492,7 +493,7 @@ async def cb_confirm_no(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.reply("❌ Отменено.")
 
 
-@router.message(InvoiceForm.confirm, _not_cmd)
+@router.message(InvoiceForm.confirm, F.text, _not_cmd)
 async def fsm_confirm(message: Message, state: FSMContext) -> None:
     text = _strip_mention(message.text or '').strip().lower().lstrip('/')
     if text in _YES:
@@ -570,7 +571,7 @@ async def cb_edit_buyer(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.edit_buyer)
 
 
-@router.message(InvoiceForm.edit_buyer, _not_cmd)
+@router.message(InvoiceForm.edit_buyer, F.text, _not_cmd)
 async def fsm_edit_buyer(message: Message, state: FSMContext) -> None:
     text = _strip_mention(message.text or '').strip()
     wait = await message.reply("🔍 Обновляю реквизиты…")
@@ -640,7 +641,7 @@ async def cb_edit_items(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(InvoiceForm.edit_items)
 
 
-@router.message(InvoiceForm.edit_items, _not_cmd)
+@router.message(InvoiceForm.edit_items, F.text, _not_cmd)
 async def fsm_edit_items(message: Message, state: FSMContext) -> None:
     text       = _strip_mention(message.text or '').strip()
     text_lower = text.lower()
