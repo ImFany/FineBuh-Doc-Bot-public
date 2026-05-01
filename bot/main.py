@@ -52,7 +52,6 @@ _bot_id: int = 0
 #  Helpers
 # ═══════════════════════════════════════════════════════════════
 
-_file_cache: dict[str, dict[str, str]] = {}  # doc_number → {invoice: file_id, upd: file_id, ...}
 
 def _items_from_parsed(parsed_items: list[Item]) -> list[dict]:
     return [{'name': i.name, 'qty': float(i.qty), 'unit': i.unit,
@@ -517,22 +516,6 @@ async def cb_confirm_no(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.reply("❌ Отменено.")
 
 
-@router.callback_query(F.data.startswith("file_"))
-async def cb_send_file(callback: CallbackQuery) -> None:
-    """Отправляет отдельный файл из пакета по нажатию кнопки."""
-    await callback.answer()
-    parts = callback.data.split("_", 2)
-    if len(parts) < 3:
-        return
-    doc_number = parts[1]
-    file_type = parts[2]
-    files = _file_cache.get(doc_number)
-    if not files or file_type not in files:
-        await callback.message.reply("Файл недоступен — сгенерируйте пакет заново.")
-        return
-    label = {'invoice': 'Счёт', 'upd': 'УПД', 'contract': 'Договор', 'xml': 'XML'}.get(file_type, '')
-    await callback.message.answer_document(files[file_type], caption=f"📄 {label}")
-
 
 @router.message(InvoiceForm.confirm, F.text, _not_cmd)
 async def fsm_confirm(message: Message, state: FSMContext) -> None:
@@ -857,22 +840,17 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
     except Exception:
         pass
 
-    file_ids = {}
-    doc_labels = ['invoice', 'upd', 'contract', 'xml']
     if media:
-        sent = await message.answer_media_group(media)
-        for i, msg in enumerate(sent):
-            if msg.document and i < len(doc_labels):
-                file_ids[doc_labels[i]] = msg.document.file_id
+        await message.answer_media_group(media)
 
     if errors:
         await message.answer("⚠️ Ошибки при генерации:\n" + '\n'.join(errors))
 
     # ── Сохранение в БД ──
     pkg_id = None
+    total = sum(float(i['price']) * float(i.get('qty') or 1) for i in items) + float(delivery)
     try:
         user_id = from_user_id or (message.from_user.id if message.from_user else 0)
-        total   = sum(float(i['price']) * float(i.get('qty') or 1) for i in items) + float(delivery)
         db.save_invoice(doc_number, serial, buyer.get('inn', ''), items,
                         float(delivery), total, message.chat.id, user_id)
         if buyer.get('inn'):
@@ -882,37 +860,16 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
     except Exception as e:
         log.exception("DB save error: %s", e)
 
-    # ── Итоговое сообщение: кнопки файлов + пакет ──
-    kb_rows = []
-    if file_ids:
-        _file_cache[doc_number] = file_ids
-        btn_map = {
-            'invoice': '📄 Счёт',
-            'upd': '📄 УПД',
-            'contract': '📝 Договор',
-            'xml': '🗂 XML',
-        }
-        row1, row2 = [], []
-        for key, label in btn_map.items():
-            if key in file_ids:
-                btn = InlineKeyboardButton(text=label, callback_data=f"file_{doc_number}_{key}")
-                if key in ('invoice', 'upd'):
-                    row1.append(btn)
-                else:
-                    row2.append(btn)
-        if row1:
-            kb_rows.append(row1)
-        if row2:
-            kb_rows.append(row2)
-
-    summary = f"📦 *Пакет {doc_number}*"
+    # ── Итоговое сообщение со сводкой ──
+    buyer_name = _short_org_name(buyer.get('name', '')) or f"ИНН {buyer.get('inn', '—')}"
+    lines = [
+        f"📦 *Пакет {doc_number}*",
+        f"Покупатель: {buyer_name}",
+        f"Позиций: {len(items)}, сумма: {total:,.2f} руб.",
+    ]
     if pkg_id:
-        summary += f" (#{pkg_id})\n`/edit_package {pkg_id}` — повторная генерация"
-    await message.answer(
-        summary,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None,
-    )
+        lines.append(f"`/edit_package {pkg_id}` — повторная генерация")
+    await message.answer('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
 # ═══════════════════════════════════════════════════════════════
