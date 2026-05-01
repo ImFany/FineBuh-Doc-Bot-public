@@ -34,5 +34,16 @@ DB_PATH       = os.path.join(BASE_DIR, "data", "bot.db")
 OUTPUT_DIR    = os.path.join(BASE_DIR, "output")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
+# ---------- Валидация входа ----------
+MAX_INPUT_LENGTH = 5000        # максимум символов в тексте
+MAX_LINES = 100                # максимум строк в сообщении
+MAX_PRICE_PER_ITEM = 1_000_000 # максимум рублей за позицию
+MAX_ITEMS_COUNT = 100          # максимум позиций в счёте
+
+# ---------- Retention policy (дни) ----------
+RETENTION_DAYS_BUYERS = 90     # кэш реквизитов (GDPR-friendly)
+RETENTION_DAYS_INVOICES = 365  # архив счётов (бухгалтерское требование)
+RETENTION_DAYS_PACKAGES = 30   # FSM пакеты
+
 # ---------- Прочее ----------
 PAYMENT_DAYS = 3   # срок оплаты счёта (рабочих дней)
