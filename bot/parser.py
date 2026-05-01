@@ -16,10 +16,11 @@ log = logging.getLogger(__name__)
 
 # Модели перебираются по порядку: первая доступная по квоте используется
 _GEMINI_MODELS = [
-    'gemini-2.5-flash-lite',         # free-tier primary (новый, 2025)
-    'gemini-2.5-flash',              # стабильная
-    'gemini-3.1-flash-lite-preview', # новейшая lite (preview)
-    'gemini-3.1-pro-preview',        # самая мощная (fallback)
+    'gemini-2.5-flash-lite',         # free-tier (стабильная, июль 2025)
+    'gemini-2.5-flash',              # free-tier (стабильная)
+    'gemini-3.1-flash-lite-preview', # free-tier (preview)
+    'gemini-2.5-pro',                # free-tier (при превышении выше)
+    # gemini-3.1-pro-preview — платная, не используем
 ]
 
 
