@@ -241,7 +241,8 @@ def _looks_like_buyer_card(text: str) -> bool:
     if len(lines) < 3:
         return False
     keywords = ['кпп', 'бик', 'р/с', 'к/с', 'банк', 'адрес', 'огрн', 'оквэд',
-                'директор', 'руководитель', 'корр', 'расчётн', 'расчетн']
+                'директор', 'руководитель', 'корр', 'расчётн', 'расчетн',
+                'счет', 'огрнип', 'корреспондент']
     tl = text.lower()
     return sum(1 for kw in keywords if kw in tl) >= 2
 
@@ -249,6 +250,7 @@ def _looks_like_buyer_card(text: str) -> bool:
 def _parse_buyer_card_regex(text: str) -> dict:
     r: dict = {}
 
+    # ── ИНН ──────────────────────────────────────────────────────
     m = re.search(r'(?:инн)\s*[:/]?\s*(\d{10,12})', text, re.IGNORECASE)
     if m:
         r['inn'] = m.group(1)
@@ -258,10 +260,12 @@ def _parse_buyer_card_regex(text: str) -> dict:
         r.setdefault('inn', m.group(1))
         r['kpp'] = m.group(2)
 
+    # ── КПП ──────────────────────────────────────────────────────
     m = re.search(r'кпп\s*[:/]?\s*(\d{9})', text, re.IGNORECASE)
     if m:
         r['kpp'] = m.group(1)
 
+    # ── Р/С (также «Счет:» с 20-значным номером) ─────────────────
     m = re.search(
         r'(?:[рp][/\\][сc]|расч[её]тный\s+сч[её]т|расчетный\s+счет)'
         r'\s*[:\-]?\s*([\d]+)',
@@ -269,11 +273,18 @@ def _parse_buyer_card_regex(text: str) -> dict:
     )
     if m:
         r['rs'] = m.group(1)
+    if not r.get('rs'):
+        # «Счет:» без уточнения — берём если ровно 20 цифр
+        m = re.search(r'\bсчет[:\s]+(\d{20})\b', text, re.IGNORECASE)
+        if m:
+            r['rs'] = m.group(1)
 
+    # ── БИК ──────────────────────────────────────────────────────
     m = re.search(r'бик\s*[:/]?\s*(\d{9})', text, re.IGNORECASE)
     if m:
         r['bik'] = m.group(1)
 
+    # ── К/С ──────────────────────────────────────────────────────
     m = re.search(
         r'(?:к[/\\]с|корр?\.?\s*сч[её]т|корреспондентский\s+сч[её]т)'
         r'\s*[:\-]?\s*([\d]+)',
@@ -282,9 +293,28 @@ def _parse_buyer_card_regex(text: str) -> dict:
     if m:
         r['ks'] = m.group(1)
 
+    # ── Банк ─────────────────────────────────────────────────────
     m = re.search(r'\bв\s+((?:АО|ПАО|ООО|НКО|Банк)[^\n,]{2,50})', text, re.IGNORECASE)
     if m:
         r['bank_name'] = m.group(1).strip().strip('"')
+    if not r.get('bank_name'):
+        # «Банк: АО «ТБанк»» — прямой формат
+        m = re.search(r'\bбанк[:\s]+((?:АО|ПАО|ООО|НКО|ТБанк|\«)[^\n]{2,60})', text, re.IGNORECASE)
+        if m:
+            r['bank_name'] = m.group(1).strip().strip('"').strip('«»')
+
+    # ── Наименование (ИП / ООО / АО …) — fallback если Gemini пропустил ──
+    if not r.get('name'):
+        for pat in (
+            # «ИП Иванов Иван Иванович» — ИП + три слова (имя физлица)
+            r'\b(ИП\s+[А-ЯЁ][а-яёА-ЯЁ]+(?:\s+[А-ЯЁ][а-яёА-ЯЁ]+){1,3})',
+            # «ООО «Название»» / «АО Тинькофф» etc.
+            r'\b((?:ООО|ОАО|ПАО|ЗАО|АО|НКО)\s+[^\n,]{3,60})',
+        ):
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                r['name'] = m.group(1).strip().rstrip(' ,;')
+                break
 
     return r
 
@@ -299,7 +329,10 @@ async def parse_buyer_card_from_image(image_bytes: bytes, api_key: str) -> dict:
             'Извлеки реквизиты контрагента с изображения и верни ТОЛЬКО JSON:\n'
             '{"name":"","inn":"","kpp":"","address":"","director":"",'
             '"rs":"","bank_name":"","bik":"","ks":""}\n'
-            'name — полное юридическое наименование. '
+            'name — полное юридическое наименование с ОПФ '
+            '(пример: "ИП Иванов Иван Иванович", "ООО «Ромашка»"). '
+            'rs — расчётный счёт (20 цифр), может называться «Счет» или «Р/С». '
+            'ks — корреспондентский счёт. '
             'Если поле не найдено — пустая строка.'
         )
         raw = await _gemini_generate(client, prompt, image_bytes=image_bytes)
@@ -318,8 +351,15 @@ async def parse_buyer_card(text: str, api_key: str = '') -> dict:
                 'Извлеки реквизиты контрагента и верни ТОЛЬКО JSON:\n'
                 '{"name":"","inn":"","kpp":"","address":"","director":"",'
                 '"rs":"","bank_name":"","bik":"","ks":""}\n'
-                'name — полное юридическое наименование с организационно-правовой формой. '
-                'Если поле не найдено — пустая строка.\n\n'
+                'Правила:\n'
+                '- name — полное юридическое наименование с ОПФ '
+                '(пример: "ИП Иванов Иван Иванович", "ООО «Ромашка»"). '
+                'Включай ИП/ООО/АО и т.д. в name.\n'
+                '- rs — расчётный счёт (20 цифр). '
+                'Может называться "Счет", "Р/С", "Расчётный счёт".\n'
+                '- ks — корреспондентский счёт (20 цифр).\n'
+                '- bank_name — название банка (без адреса и ИНН банка).\n'
+                '- Если поле не найдено — пустая строка.\n\n'
                 f'Текст:\n{text[:3000]}'
             )
             raw = await _gemini_generate(client, prompt)
