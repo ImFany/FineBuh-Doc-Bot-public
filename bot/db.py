@@ -227,14 +227,14 @@ def cleanup_expired() -> tuple[int, int, int]:
     with _db_transaction() as c:
         now = datetime.now().isoformat()
 
-        c.execute("DELETE FROM buyers WHERE expires_at <= ?", (now,))
-        buyers_del = c.rowcount
+        cur_buyers = c.execute("DELETE FROM buyers WHERE expires_at <= ?", (now,))
+        buyers_del = cur_buyers.rowcount
 
-        c.execute("DELETE FROM invoices WHERE expires_at <= ?", (now,))
-        invoices_del = c.rowcount
+        cur_invoices = c.execute("DELETE FROM invoices WHERE expires_at <= ?", (now,))
+        invoices_del = cur_invoices.rowcount
 
-        c.execute("DELETE FROM packages WHERE expires_at <= ?", (now,))
-        packages_del = c.rowcount
+        cur_packages = c.execute("DELETE FROM packages WHERE expires_at <= ?", (now,))
+        packages_del = cur_packages.rowcount
 
         if buyers_del + invoices_del + packages_del > 0:
             log.info(f"Cleanup: deleted {buyers_del} buyers, {invoices_del} invoices, {packages_del} packages")
