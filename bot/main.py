@@ -52,6 +52,8 @@ _bot_id: int = 0
 #  Helpers
 # ═══════════════════════════════════════════════════════════════
 
+_file_cache: dict[str, dict[str, str]] = {}  # doc_number → {invoice: file_id, upd: file_id, ...}
+
 def _items_from_parsed(parsed_items: list[Item]) -> list[dict]:
     return [{'name': i.name, 'qty': float(i.qty), 'unit': i.unit,
              'price': float(i.price)} for i in parsed_items]
@@ -99,6 +101,28 @@ def _strip_mention(text: str) -> str:
     if _bot_username:
         text = re.sub(rf'@{re.escape(_bot_username)}\s*', '', text, flags=re.IGNORECASE).strip()
     return text
+
+
+_ORG_ABBREVS = [
+    (r'публичное\s+акционерное\s+общество', 'ПАО'),
+    (r'закрытое\s+акционерное\s+общество', 'ЗАО'),
+    (r'открытое\s+акционерное\s+общество', 'ОАО'),
+    (r'акционерное\s+общество', 'АО'),
+    (r'общество\s+с\s+ограниченной\s+ответственностью', 'ООО'),
+    (r'индивидуальный\s+предприниматель', 'ИП'),
+]
+
+
+def _short_org_name(name: str) -> str:
+    """Сокращает организационно-правовую форму и убирает кавычки."""
+    if not name:
+        return ''
+    result = name.strip()
+    for pattern, abbrev in _ORG_ABBREVS:
+        result = re.sub(pattern, abbrev, result, flags=re.IGNORECASE)
+    result = re.sub(r'[«»""\']+', '', result)
+    result = re.sub(r'\s{2,}', ' ', result).strip()
+    return result
 
 
 _RE_BUYER_BLOCK_START = re.compile(
@@ -493,6 +517,23 @@ async def cb_confirm_no(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.reply("❌ Отменено.")
 
 
+@router.callback_query(F.data.startswith("file_"))
+async def cb_send_file(callback: CallbackQuery) -> None:
+    """Отправляет отдельный файл из пакета по нажатию кнопки."""
+    await callback.answer()
+    parts = callback.data.split("_", 2)
+    if len(parts) < 3:
+        return
+    doc_number = parts[1]
+    file_type = parts[2]
+    files = _file_cache.get(doc_number)
+    if not files or file_type not in files:
+        await callback.message.reply("Файл недоступен — сгенерируйте пакет заново.")
+        return
+    label = {'invoice': 'Счёт', 'upd': 'УПД', 'contract': 'Договор', 'xml': 'XML'}.get(file_type, '')
+    await callback.message.answer_document(files[file_type], caption=f"📄 {label}")
+
+
 @router.message(InvoiceForm.confirm, F.text, _not_cmd)
 async def fsm_confirm(message: Message, state: FSMContext) -> None:
     text = _strip_mention(message.text or '').strip().lower().lstrip('/')
@@ -534,7 +575,7 @@ async def cb_load_package(callback: CallbackQuery, state: FSMContext) -> None:
 
     await state.clear()
     await state.update_data(**data)
-    buyer_name = data.get('buyer', {}).get('name', '') or data.get('buyer', {}).get('inn', '?')
+    buyer_name = _short_org_name(data.get('buyer', {}).get('name', '')) or data.get('buyer', {}).get('inn', '?')
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
@@ -822,11 +863,45 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
     except Exception:
         pass
 
+    file_ids = {}
+    doc_labels = ['invoice', 'upd', 'contract', 'xml']
     if media:
-        await message.answer_media_group(media)
+        sent = await message.answer_media_group(media)
+        for i, msg in enumerate(sent):
+            if msg.document and i < len(doc_labels):
+                file_ids[doc_labels[i]] = msg.document.file_id
 
     if errors:
         await message.answer("⚠️ Ошибки при генерации:\n" + '\n'.join(errors))
+
+    # ── Кнопки для скачивания отдельных файлов ──
+    if file_ids:
+        _file_cache[doc_number] = file_ids
+        btn_map = {
+            'invoice': '📄 Счёт',
+            'upd': '📄 УПД',
+            'contract': '📝 Договор',
+            'xml': '🗂 XML',
+        }
+        row1, row2 = [], []
+        for key, label in btn_map.items():
+            if key in file_ids:
+                btn = InlineKeyboardButton(text=label, callback_data=f"file_{doc_number}_{key}")
+                if key in ('invoice', 'upd'):
+                    row1.append(btn)
+                else:
+                    row2.append(btn)
+        kb_rows = []
+        if row1:
+            kb_rows.append(row1)
+        if row2:
+            kb_rows.append(row2)
+        if kb_rows:
+            await message.answer(
+                f"📦 *Пакет {doc_number}* — скачать отдельно:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+            )
 
     # ── Сохранение в БД ──
     try:
@@ -1174,12 +1249,8 @@ async def cmd_edit_package(message: Message, state: FSMContext) -> None:
                 d     = json.loads(p['json_data'])
                 buyer = d.get('buyer', {})
                 inn   = buyer.get('inn') or inn
-                name  = buyer.get('name', '') or ''
-                name  = re.sub(
-                    r'индивидуальный\s+предприниматель\s*',
-                    'ИП ', name, flags=re.IGNORECASE
-                ).strip()
-                label = f"#{p['id']} {dt} · {name[:18]}" if name else f"#{p['id']} {dt} · ИНН {inn}"
+                name  = _short_org_name(buyer.get('name', '') or '')
+                label = f"#{p['id']} {dt} · {name[:25]}" if name else f"#{p['id']} {dt} · ИНН {inn}"
             except Exception:
                 label = f"#{p['id']} {dt} · ИНН {inn}"
             buttons.append([InlineKeyboardButton(
