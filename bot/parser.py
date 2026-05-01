@@ -16,9 +16,10 @@ log = logging.getLogger(__name__)
 
 # Модели перебираются по порядку: первая доступная по квоте используется
 _GEMINI_MODELS = [
-    'gemini-2.0-flash-lite',   # free-tier: 30 rpm / 1500 rpd
-    'gemini-2.0-flash',        # запасная (платная или более высокая квота)
-    'gemini-2.5-flash',        # резерв
+    'gemini-2.5-flash-lite',         # free-tier primary (новый, 2025)
+    'gemini-2.5-flash',              # стабильная
+    'gemini-3.1-flash-lite-preview', # новейшая lite (preview)
+    'gemini-3.1-pro-preview',        # самая мощная (fallback)
 ]
 
 
@@ -305,16 +306,20 @@ def _parse_buyer_card_regex(text: str) -> dict:
 
     # ── Наименование (ИП / ООО / АО …) — fallback если Gemini пропустил ──
     if not r.get('name'):
-        for pat in (
-            # «ИП Иванов Иван Иванович» — ИП + три слова (имя физлица)
-            r'\b(ИП\s+[А-ЯЁ][а-яёА-ЯЁ]+(?:\s+[А-ЯЁ][а-яёА-ЯЁ]+){1,3})',
-            # «ООО «Название»» / «АО Тинькофф» etc.
-            r'\b((?:ООО|ОАО|ПАО|ЗАО|АО|НКО)\s+[^\n,]{3,60})',
-        ):
-            m = re.search(pat, text, re.IGNORECASE)
+        # Вариант 1: строка целиком начинается с «ИП ФИО» (работает с ALL-CAPS)
+        for line in text.splitlines():
+            line = line.strip()
+            if re.match(r'^ИП\s+\S', line, re.IGNORECASE) and 5 < len(line) < 80:
+                r['name'] = line
+                break
+        # Вариант 2: ООО / АО / ПАО / ЗАО
+        if not r.get('name'):
+            m = re.search(
+                r'\b((?:ООО|ОАО|ПАО|ЗАО|АО|НКО)\s+[«"»\w][^\n,]{2,55})',
+                text, re.IGNORECASE
+            )
             if m:
                 r['name'] = m.group(1).strip().rstrip(' ,;')
-                break
 
     return r
 
@@ -369,6 +374,9 @@ async def parse_buyer_card(text: str, api_key: str = '') -> dict:
             for k, v in regex.items():
                 if not data.get(k):
                     data[k] = v
+            if not data.get('name'):
+                log.warning("parse_buyer_card: name still empty after Gemini+regex. inn=%s text_start=%r",
+                            data.get('inn'), text[:80])
             return data
         except Exception as e:
             log.warning("Gemini buyer card parse error: %s", e)

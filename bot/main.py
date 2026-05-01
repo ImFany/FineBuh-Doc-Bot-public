@@ -492,6 +492,46 @@ async def fsm_confirm(message: Message, state: FSMContext) -> None:
 #  Редактирование реквизитов (кнопка ✏️ Реквизиты)
 # ═══════════════════════════════════════════════════════════════
 
+@router.callback_query(F.data.startswith("pkg_"))
+async def cb_load_package(callback: CallbackQuery, state: FSMContext) -> None:
+    """Загружает пакет по нажатию кнопки в /edit_package."""
+    await callback.answer()
+    try:
+        pkg_id = int(callback.data.split("_", 1)[1])
+    except (ValueError, IndexError):
+        await callback.message.reply("❌ Неверный ID пакета.")
+        return
+
+    pkg = db.get_package(pkg_id)
+    if not pkg:
+        await callback.message.reply(f"❌ Пакет `#{pkg_id}` не найден.", parse_mode=ParseMode.MARKDOWN)
+        return
+    try:
+        data = json.loads(pkg['json_data'])
+    except Exception:
+        await callback.message.reply("❌ Ошибка чтения данных пакета.")
+        return
+
+    await state.clear()
+    await state.update_data(**data)
+    buyer_name = data.get('buyer', {}).get('name', '') or data.get('buyer', {}).get('inn', '?')
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.reply(
+        f"📦 Пакет `#{pkg_id}` загружен ({buyer_name})\n"
+        f"Проверьте данные и нажмите *Генерировать* или отредактируйте:",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+    await callback.message.reply(
+        _confirm_text(data),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_confirm_keyboard(),
+    )
+    await state.set_state(InvoiceForm.confirm)
+
+
 @router.callback_query(F.data == "edit_buyer")
 async def cb_edit_buyer(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
@@ -1106,27 +1146,30 @@ async def cmd_edit_package(message: Message, state: FSMContext) -> None:
                 "После каждой генерации пакет сохраняется автоматически.",
             )
             return
-        lines = ["📦 *Последние пакеты:*\n"]
+        buttons = []
         for p in packages:
             inn = p.get('client_inn') or '—'
             dt  = (p.get('created_at') or '')[:10]
             try:
-                d    = json.loads(p['json_data'])
+                d     = json.loads(p['json_data'])
                 buyer = d.get('buyer', {})
                 inn   = buyer.get('inn') or inn
                 name  = buyer.get('name', '') or ''
-                # «Индивидуальный предприниматель» → «ИП»
-                name = re.sub(
+                name  = re.sub(
                     r'индивидуальный\s+предприниматель\s*',
                     'ИП ', name, flags=re.IGNORECASE
                 ).strip()
-                # Оставляем только первые 20 символов имени
-                label = f"{name[:20]} | ИНН {inn}" if name else f"ИНН {inn}"
+                label = f"#{p['id']} {dt} · {name[:18]}" if name else f"#{p['id']} {dt} · ИНН {inn}"
             except Exception:
-                label = f"ИНН {inn}"
-            lines.append(f"`#{p['id']}` {dt} — {label}")
-        lines.append("\nИспользование: `/edit_package <id>`")
-        await message.reply('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
+                label = f"#{p['id']} {dt} · ИНН {inn}"
+            buttons.append([InlineKeyboardButton(
+                text=label,
+                callback_data=f"pkg_{p['id']}"
+            )])
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await message.reply("📦 *Последние пакеты — нажмите чтобы загрузить:*",
+                            parse_mode=ParseMode.MARKDOWN,
+                            reply_markup=kb)
         return
 
     try:
