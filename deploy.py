@@ -1,109 +1,100 @@
-"""One-shot deployment script for forwarder.py to VPS."""
+"""Deployment script for FineBuh-Doc-Bot to production VPS."""
+import os
+import sys
 import paramiko
-import time
+from pathlib import Path
+from dotenv import load_dotenv
 
-HOST = "178.208.91.83"
-USER = "root"
-PASS = "MQbs5xN8Pv"
-REMOTE_DIR = "/opt/tg-forwarder"
+# Load environment variables
+load_dotenv('.env.local')
+load_dotenv('.env')
 
-FORWARDER_SRC = "forwarder.py"
+HOST = os.getenv('DEPLOY_HOST') or os.getenv('VPS_HOST')
+USER = os.getenv('DEPLOY_USER') or os.getenv('VPS_USER', 'root')
+PASSWORD = os.getenv('DEPLOY_PASSWORD') or os.getenv('VPS_PASS')
+REMOTE_DIR = os.getenv('DEPLOY_REMOTE_DIR', '/opt/docflow-bot')
 
-SYSTEMD_UNIT = """\
-[Unit]
-Description=Telegram Keyword Forwarder
-After=network.target
+FILES_TO_DEPLOY = [
+    ('bot/main.py', f'{REMOTE_DIR}/bot/main.py'),
+    ('bot/parser.py', f'{REMOTE_DIR}/bot/parser.py'),
+    ('bot/generator.py', f'{REMOTE_DIR}/bot/generator.py'),
+    ('bot/db.py', f'{REMOTE_DIR}/bot/db.py'),
+    ('bot/config.py', f'{REMOTE_DIR}/bot/config.py'),
+    ('bot/log_utils.py', f'{REMOTE_DIR}/bot/log_utils.py'),
+    ('bot/num2words_ru.py', f'{REMOTE_DIR}/bot/num2words_ru.py'),
+    ('requirements.txt', f'{REMOTE_DIR}/requirements.txt'),
+]
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/tg-forwarder
-ExecStart=/usr/bin/python3 /opt/tg-forwarder/forwarder.py
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-Environment=TG_TARGET_CHANNEL=NF_alarm
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-
-def run(ssh, cmd, *, check=True):
+def run_command(ssh, cmd, check=True):
     print(f"\n$ {cmd}")
     _, stdout, stderr = ssh.exec_command(cmd, timeout=120)
-    out = stdout.read().decode()
-    err = stderr.read().decode()
-    if out:
-        print(out.rstrip())
-    if err:
-        print("[stderr]", err.rstrip())
+    out = stdout.read().decode().strip()
+    err = stderr.read().decode().strip()
+    if out: print(out)
+    if err and check: print("[stderr]", err)
     rc = stdout.channel.recv_exit_status()
     if check and rc != 0:
-        raise RuntimeError(f"Command failed (rc={rc}): {cmd}")
+        raise RuntimeError(f"Command failed (rc={rc})")
     return out, err, rc
 
-
 def main():
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    print(f"Connecting to {HOST}...")
-    ssh.connect(HOST, username=USER, password=PASS, timeout=15)
-    print("Connected.\n")
-
-    # 1. System update + Python + pip
-    run(ssh, "apt-get update -qq")
-    run(ssh, "apt-get install -y -qq python3 python3-pip python3-venv")
-    out, _, _ = run(ssh, "python3 --version")
-    print("Python:", out.strip())
-
-    # 2. Working directory
-    run(ssh, f"mkdir -p {REMOTE_DIR}")
-
-    # 3. Upload forwarder.py via SFTP
-    sftp = ssh.open_sftp()
-    remote_path = f"{REMOTE_DIR}/forwarder.py"
-    sftp.put(FORWARDER_SRC, remote_path)
-    print(f"\nUploaded forwarder.py -> {remote_path}")
-
-    # 4. Install telethon
-    run(ssh, f"pip3 install -q telethon")
-    out, _, _ = run(ssh, "pip3 show telethon | grep Version")
-    print("Telethon:", out.strip())
-
-    # 5. Write systemd unit
-    unit_content = SYSTEMD_UNIT.replace('"', '\\"')
-    run(ssh, f'cat > /etc/systemd/system/tg-forwarder.service << \'EOF\'\n{SYSTEMD_UNIT}EOF')
-
-    # 6. Enable service (but don't start yet — need auth first)
-    run(ssh, "systemctl daemon-reload")
-    run(ssh, "systemctl enable tg-forwarder.service")
-
-    sftp.close()
-    ssh.close()
-
-    print("\n" + "="*60)
-    print("ДЕПЛОЙ ЗАВЕРШЁН.")
-    print("="*60)
-    print("""
-Следующий шаг — первичная авторизация Telethon (один раз).
-
-Подключитесь к серверу вручную:
-  ssh root@178.208.91.83
-
-Затем запустите:
-  cd /opt/tg-forwarder
-  python3 forwarder.py
-
-Введите номер телефона и код из Telegram.
-После успешного старта нажмите Ctrl+C.
-
-Потом запускайте сервис:
-  systemctl start tg-forwarder
-  systemctl status tg-forwarder
-""")
-
+    print("=" * 70)
+    print("FineBuh-Doc-Bot Deployment to VPS")
+    print("=" * 70)
+    
+    if not HOST or not USER or not PASSWORD:
+        print("❌ Missing credentials in .env.local or .env")
+        sys.exit(1)
+    
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        print(f"\n Connecting to {USER}@{HOST}...")
+        ssh.connect(HOST, username=USER, password=PASSWORD, timeout=15)
+        print("✓ Connected\n")
+        
+        # Upload files
+        print("📤 Uploading files...")
+        sftp = ssh.open_sftp()
+        for local, remote in FILES_TO_DEPLOY:
+            if not Path(local).exists():
+                print(f"  ⚠️  {local} not found")
+                continue
+            try:
+                remote_dir = str(Path(remote).parent)
+                try:
+                    sftp.stat(remote_dir)
+                except:
+                    run_command(ssh, f"mkdir -p {remote_dir}")
+                sftp.put(local, remote)
+                print(f"  ✓ {local}")
+            except Exception as e:
+                print(f"  ❌ {local}: {e}")
+        sftp.close()
+        
+        # Update dependencies
+        print("\n📦 Updating dependencies...")
+        venv_pip = f"{REMOTE_DIR}/venv/bin/pip"
+        run_command(ssh, f"{venv_pip} install -U pip", check=False)
+        run_command(ssh, f"{venv_pip} install -r {REMOTE_DIR}/requirements.txt")
+        
+        # Restart service
+        print("\n🔄 Restarting service...")
+        run_command(ssh, f"rm -rf {REMOTE_DIR}/bot/__pycache__", check=False)
+        run_command(ssh, "systemctl restart docflow-bot", check=False)
+        
+        # Show logs
+        print("\n📋 Recent logs:")
+        out, _, _ = run_command(ssh, "journalctl -u docflow-bot -n 15 --no-pager", check=False)
+        
+        print("\n" + "=" * 70)
+        print("✅ DEPLOYMENT COMPLETE!")
+        print("=" * 70)
+        ssh.close()
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

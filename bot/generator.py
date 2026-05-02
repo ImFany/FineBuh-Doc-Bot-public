@@ -10,15 +10,10 @@ import os
 import uuid
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any
-
 import jinja2
 from weasyprint import HTML as WeasyHTML
 from docxtpl import DocxTemplate
 from lxml import etree
-from docx import Document
-from docx.shared import Pt, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 import config
 from num2words_ru import amount_to_words
@@ -190,19 +185,8 @@ def generate_contract_pdf(data: dict) -> bytes:
 
 def generate_contract_docx(data: dict) -> bytes:
     tmpl_path = os.path.join(config.TEMPLATES_DIR, 'contract.docx')
-    if not os.path.exists(tmpl_path):
-        _build_contract_template(tmpl_path)
-
-    items, _, _, total_incl = enrich_items(
-        data['items'], Decimal(str(data.get('delivery', 0)))
-    )
     doc_date = data['date']
     buyer    = data['buyer']
-
-    items_desc = '; '.join(
-        f"{i['name']} ({i['qty']} {i['unit']}) — {i['total_with_vat']:.2f} руб."
-        for i in items if i.get('qty') not in ('', None)
-    )
 
     tpl = DocxTemplate(tmpl_path)
     tpl.render({
@@ -219,17 +203,6 @@ def generate_contract_docx(data: dict) -> bytes:
         'buyer_bank':       buyer.get('bank_name', ''),
         'buyer_bik':        buyer.get('bik', ''),
         'buyer_ks':         buyer.get('ks', ''),
-        'seller_name':      config.SELLER_NAME,
-        'seller_inn':       config.SELLER_INN,
-        'seller_address':   config.SELLER_ADDRESS,
-        'seller_rs':        config.SELLER_RS,
-        'seller_bank':      config.SELLER_BANK_NAME,
-        'seller_bik':       config.SELLER_BIK,
-        'seller_ks':        config.SELLER_KS,
-        'seller_signature': config.SELLER_SIGNATURE,
-        'items_desc':       items_desc,
-        'total_amount':     f"{total_incl:.2f}",
-        'total_words':      amount_to_words(total_incl),
         'contract_end':     f"31 декабря {doc_date.year} г.",
     })
     buf = io.BytesIO()
@@ -237,141 +210,26 @@ def generate_contract_docx(data: dict) -> bytes:
     return buf.getvalue()
 
 
-def _build_contract_template(path: str) -> None:
-    """Создаёт шаблон договора с Jinja2-плейсхолдерами (docxtpl-совместимый)."""
-    doc = Document()
-    for sec in doc.sections:
-        sec.top_margin    = Cm(2)
-        sec.bottom_margin = Cm(2)
-        sec.left_margin   = Cm(2.5)
-        sec.right_margin  = Cm(1.5)
-
-    # Заголовок
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run('ДОГОВОР ПОСТАВКИ № {{number}}')
-    r.bold = True; r.font.size = Pt(14)
-
-    p2 = doc.add_paragraph()
-    p2.add_run('г. Элиста')
-    p2.add_run('\t\t\t\t\t\t\t\t')
-    p2.add_run('«{{date_day}}» {{date_month}} {{date_year}} г.')
-
-    doc.add_paragraph()
-
-    # Преамбула
-    pre = doc.add_paragraph()
-    pre.add_run('{{buyer_name}}').bold = True
-    pre.add_run(
-        ', ИНН {{buyer_inn}}, КПП {{buyer_kpp}}, именуемое в дальнейшем «Покупатель», '
-        'в лице {{buyer_director}}, действующего на основании Устава, с одной стороны, и '
-    )
-    pre.add_run(config.SELLER_NAME).bold = True
-    pre.add_run(
-        f', ИНН {config.SELLER_INN}, именуемый(ая) в дальнейшем «Поставщик», '
-        'с другой стороны, заключили настоящий договор о нижеследующем:'
-    )
-
-    doc.add_paragraph()
-
-    _sections = [
-        ('1. ПРЕДМЕТ ДОГОВОРА', [
-            '1.1. Поставщик обязуется поставить, а Покупатель — принять и оплатить товар: {{items_desc}}.',
-            '1.2. Наименование, характеристики, количество и цена каждой партии товара определяются счётами, выставленными Поставщиком.',
-            '1.3. Поставщик гарантирует, что поставляемый товар полностью ему принадлежит и не обременён правами третьих лиц.',
-        ]),
-        ('2. ЦЕНА И ПОРЯДОК ОПЛАТЫ', [
-            '2.1. Стоимость товара по настоящему договору составляет {{total_amount}} руб. ({{total_words}}) с учётом НДС 5%.',
-            '2.2. Покупатель оплачивает счёт в течение 3 (трёх) рабочих дней с даты его выставления.',
-            '2.3. Датой оплаты считается день поступления денежных средств на расчётный счёт Поставщика.',
-        ]),
-        ('3. ПОСТАВКА И ПЕРЕХОД ПРАВА СОБСТВЕННОСТИ', [
-            '3.1. Право собственности на товар переходит к Покупателю с момента его передачи, фиксируемой подписанием УПД.',
-            '3.2. Товар отпускается по факту поступления оплаты на р/с Поставщика, самовывозом, при наличии доверенности и паспорта, если иное не оговорено дополнительно.',
-        ]),
-        ('4. КАЧЕСТВО ТОВАРА', [
-            '4.1. Товар должен соответствовать качественным характеристикам, установленным для данного вида товара.',
-            '4.2. Покупатель обязан осмотреть товар при получении и предъявить претензию по явным недостаткам в течение 3 (трёх) рабочих дней.',
-        ]),
-        ('5. ОТВЕТСТВЕННОСТЬ СТОРОН', [
-            '5.1. За просрочку оплаты Поставщик вправе начислить неустойку в размере 1% от суммы задолженности за каждый день просрочки, но не более 10%.',
-            '5.2. Стороны освобождаются от ответственности при наступлении обстоятельств непреодолимой силы.',
-        ]),
-        ('6. ФОРС-МАЖОР', [
-            '6.1. Сторона, для которой возникли обстоятельства непреодолимой силы, обязана уведомить другую сторону в течение 3 (трёх) рабочих дней.',
-            '6.2. Если форс-мажор продолжается более 6 (шести) месяцев подряд, каждая из сторон вправе расторгнуть договор в одностороннем порядке.',
-        ]),
-        ('7. ПОРЯДОК РАЗРЕШЕНИЯ СПОРОВ', [
-            '7.1. Все споры стороны разрешают путём переговоров в течение 10 (десяти) рабочих дней.',
-            '7.2. При недостижении согласия спор передаётся в арбитражный суд по месту нахождения ответчика.',
-        ]),
-        ('8. СРОК ДЕЙСТВИЯ ДОГОВОРА', [
-            '8.1. Договор вступает в силу с даты подписания и действует до {{contract_end}}, с автоматической пролонгацией на следующий год при отсутствии уведомления о расторжении.',
-        ]),
-        ('9. ПРОЧИЕ УСЛОВИЯ', [
-            '9.1. Договор составлен в 2 (двух) экземплярах, по одному для каждой из сторон.',
-            '9.2. Все изменения к договору оформляются дополнительными соглашениями в письменной форме.',
-            '9.3. По всему, что не урегулировано настоящим договором, стороны руководствуются действующим законодательством Российской Федерации.',
-        ]),
-    ]
-
-    for title_text, paras in _sections:
-        tp = doc.add_paragraph()
-        tp.add_run(title_text).bold = True
-        for pt in paras:
-            doc.add_paragraph(pt)
-        doc.add_paragraph()
-
-    # Реквизиты
-    sig = doc.add_paragraph()
-    sig.add_run('РЕКВИЗИТЫ И ПОДПИСИ СТОРОН').bold = True
-
-    tbl = doc.add_table(rows=1, cols=2)
-    tbl.style = 'Table Grid'
-    left  = tbl.cell(0, 0)
-    right = tbl.cell(0, 1)
-
-    left.text = (
-        'ПОКУПАТЕЛЬ\n'
-        '{{buyer_name}}\n'
-        'ИНН: {{buyer_inn}}, КПП: {{buyer_kpp}}\n'
-        'Адрес: {{buyer_address}}\n'
-        'Р/С: {{buyer_rs}}\n'
-        'Банк: {{buyer_bank}}\n'
-        'БИК: {{buyer_bik}}, К/С: {{buyer_ks}}\n\n'
-        '_________________ {{buyer_director}}\nМ.П.'
-    )
-    right.text = (
-        f'ПОСТАВЩИК\n'
-        f'{config.SELLER_NAME}\n'
-        f'ИНН: {config.SELLER_INN}\n'
-        f'Адрес: {config.SELLER_ADDRESS}\n'
-        f'Р/С: {config.SELLER_RS}\n'
-        f'Банк: {config.SELLER_BANK_NAME}\n'
-        f'БИК: {config.SELLER_BIK}, К/С: {config.SELLER_KS}\n\n'
-        f'_________________ {{{{seller_signature}}}}\nМ.П.'
-    )
-
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    doc.save(path)
-
-
 # ─────────────────────── EDO XML ──────────────────────────────────
 
 def generate_xml(data: dict) -> bytes:
-    """Генерирует XML-файл УПД в формате ФНС ON_NSCHFDOPPR v5.03 (windows-1251)."""
+    """Генерирует XML-файл УПД в формате ФНС ON_NSCHFDOPPR v5.03 (windows-1251).
+    Структура соответствует выгрузке 1С:Предприятие 8."""
     items, total_excl, total_vat, total_incl = enrich_items(
         data['items'], Decimal(str(data.get('delivery', 0)))
     )
     doc_date = data['date']
     buyer    = data['buyer']
-    num_raw  = data['doc_number']          # Б-000060
+    num_raw  = data['doc_number']
+    num_int  = ''.join(c for c in num_raw if c.isdigit()) or num_raw
 
+    doc_uuid = str(uuid.uuid4())
     file_id = (
         f"ON_NSCHFDOPPR_{buyer.get('inn','')}_"
         f"{buyer.get('kpp','')}_{config.SELLER_INN}_"
-        f"{doc_date.strftime('%Y%m%d')}_{uuid.uuid4().hex[:8]}"
+        f"{doc_date.strftime('%Y%m%d')}_{doc_uuid[:8]}"
     )
+    basis_uuid = str(uuid.uuid4())
 
     NSMAP = {
         'xs':  'http://www.w3.org/2001/XMLSchema',
@@ -381,114 +239,186 @@ def generate_xml(data: dict) -> bytes:
     root = etree.Element('Файл', nsmap=NSMAP)
     root.set('ИдФайл',  file_id)
     root.set('ВерсФорм', '5.03')
-    root.set('ВерсПрог', 'TelegramBot-DocFlow-1.4')
+    root.set('ВерсПрог', '1С:Предприятие 8')
 
     doc_el = etree.SubElement(root, 'Документ')
     doc_el.set('КНД',            '1115131')
     doc_el.set('Функция',        'СЧФДОП')
-    doc_el.set('НаимДокОпр',     'Счет-фактура и документ об отгрузке товаров (выполнении работ), '
-                                  'передаче имущественных прав (документ об оказании услуг)')
-    doc_el.set('ПоФактХЖ',       'Передаточный документ (акт)')
-    doc_el.set('НомДок',         num_raw)
-    doc_el.set('ДатаДок',        _date_short(doc_date))
-    doc_el.set('НаимЭконСубСост', 'Индивидуальный предприниматель')
-    doc_el.set('ВремФайл',       datetime.now().strftime('%H.%M.%S'))
+    doc_el.set('ПоФактХЖ',
+               'Документ об отгрузке товаров (выполнении работ), '
+               'передаче имущественных прав (документ об оказании услуг)')
+    doc_el.set('НаимДокОпр',     'Универсальный передаточный документ')
+    doc_el.set('ДатаИнфПр',      _date_short(doc_date))
+    doc_el.set('ВремИнфПр',      datetime.now().strftime('%H.%M.%S'))
+    doc_el.set('НаимЭконСубСост',
+               f'ИП {config.SELLER_SHORT_NAME}, ИНН {config.SELLER_INN}')
 
     # ── СвСчФакт ──
     sv = etree.SubElement(doc_el, 'СвСчФакт')
-    sv.set('НомерСчФ', num_raw)
-    sv.set('ДатаСчФ',  _date_short(doc_date))
+    sv.set('НомерДок', num_int)
+    sv.set('ДатаДок',  _date_short(doc_date))
 
     # Продавец
     sv_prod = etree.SubElement(sv, 'СвПрод')
     id_sv   = etree.SubElement(sv_prod, 'ИдСв')
-    ogrnip  = etree.SubElement(id_sv, 'ОГРНИП')
-    ogrnip.set('ОГРНИП',       config.SELLER_OGRNIP)
-    ogrnip.set('ДатаОГРНИП',  config.SELLER_OGRNIP_DATE)
-    ogrnip.set('НаимОП',       config.SELLER_SHORT_NAME)
-    fio = etree.SubElement(ogrnip, 'ФИО')
+    sv_ip   = etree.SubElement(id_sv, 'СвИП')
+    sv_ip.set('ИННФЛ',        config.SELLER_INN)
+    sv_ip.set('СвГосРегИП',
+              f'ОГРНИП {config.SELLER_OGRNIP}, '
+              f'дата регистрации {config.SELLER_OGRNIP_DATE_FULL}')
+    sv_ip.set('ОГРНИП',       config.SELLER_OGRNIP)
+    sv_ip.set('ДатаОГРНИП',   config.SELLER_OGRNIP_DATE)
+    fio = etree.SubElement(sv_ip, 'ФИО')
     fio.set('Фамилия',  'Шавкова')
     fio.set('Имя',      'Тамара')
     fio.set('Отчество', 'Расуловна')
 
     adr_prod = etree.SubElement(sv_prod, 'Адрес')
-    adr_rf   = etree.SubElement(adr_prod, 'АдрРФ')
-    adr_rf.set('КодРег',      config.SELLER_ADDR_REGION_CODE)
-    adr_rf.set('НаимРегион',  config.SELLER_ADDR_REGION_NAME)
+    adr_gar  = etree.SubElement(adr_prod, 'АдрГАР')
+    adr_gar.set('ИдНом',  '6fec9385-d53d-493f-95cc-760898426c4c')
+    adr_gar.set('Индекс', '358004')
+    etree.SubElement(adr_gar, 'Регион').text        = config.SELLER_ADDR_REGION_CODE
+    etree.SubElement(adr_gar, 'НаимРегион').text     = config.SELLER_ADDR_REGION_NAME
+    mun = etree.SubElement(adr_gar, 'МуниципРайон')
+    mun.set('ВидКод', '2'); mun.set('Наим', 'город Элиста')
+    nas = etree.SubElement(adr_gar, 'НаселенПункт')
+    nas.set('Вид', 'г.'); nas.set('Наим', 'Элиста')
+    ul = etree.SubElement(adr_gar, 'ЭлУлДорСети')
+    ul.set('Тип', 'пр-д'); ul.set('Наим', 'Автомобилистов 3-й')
+    zd = etree.SubElement(adr_gar, 'Здание')
+    zd.set('Тип', 'д.'); zd.set('Номер', '1')
 
-    rekv = etree.SubElement(sv_prod, 'РеквСчет')
-    rekv.set('НомСч', config.SELLER_RS)
+    rekv = etree.SubElement(sv_prod, 'БанкРекв')
+    rekv.set('НомерСчета', config.SELLER_RS)
     bank_el = etree.SubElement(rekv, 'СвБанк')
     bank_el.set('НаимБанк', config.SELLER_BANK_NAME)
     bank_el.set('БИК',      config.SELLER_BIK)
-    bank_el.set('КорСч',    config.SELLER_KS)
+    bank_el.set('КорСчет',  config.SELLER_KS)
 
     # Грузоотправитель (он же)
-    gruz_ot   = etree.SubElement(sv, 'ГрузОт')
-    gruz_otpr = etree.SubElement(gruz_ot, 'ГрузОтпр')
-    gruz_otpr.set('ОнЖе', 'он же')
+    gruz_ot = etree.SubElement(sv, 'ГрузОт')
+    etree.SubElement(gruz_ot, 'ОнЖе').text = 'он же'
 
-    # Покупатель / Грузополучатель
-    for tag in ('СвПокуп', 'ГрузПолуч'):
-        sv_pok  = etree.SubElement(sv, tag)
-        id_sv2  = etree.SubElement(sv_pok, 'ИдСв')
-        sv_yul  = etree.SubElement(id_sv2, 'СвЮЛУч')
-        sv_yul.set('НаимОрг', buyer.get('name', ''))
-        sv_yul.set('ИННЮЛ',   buyer.get('inn', ''))
-        if buyer.get('kpp'):
-            sv_yul.set('КПП', buyer['kpp'])
-        adr_pok = etree.SubElement(sv_pok, 'Адрес')
-        adr_ino = etree.SubElement(adr_pok, 'АдрИно')
-        adr_ino.set('КодСтр',   '643')
-        adr_ino.set('НаимСтр',  'Россия')
-        adr_ino.set('АдрТекст', buyer.get('address', ''))
+    # Грузополучатель
+    gruz_pol = etree.SubElement(sv, 'ГрузПолуч')
+    gp_id    = etree.SubElement(gruz_pol, 'ИдСв')
+    gp_yul   = etree.SubElement(gp_id, 'СвЮЛУч')
+    gp_yul.set('НаимОрг', buyer.get('name', ''))
+    gp_yul.set('ИННЮЛ',   buyer.get('inn', ''))
+    if buyer.get('kpp'):
+        gp_yul.set('КПП', buyer['kpp'])
+    gp_adr   = etree.SubElement(gruz_pol, 'Адрес')
+    gp_ainf  = etree.SubElement(gp_adr, 'АдрИнф')
+    gp_ainf.set('КодСтр',   '643')
+    gp_ainf.set('НаимСтран', 'РОССИЯ')
+    gp_ainf.set('АдрТекст', buyer.get('address', ''))
+
+    # ДокПодтвОтгрНом
+    dpod = etree.SubElement(sv, 'ДокПодтвОтгрНом')
+    dpod.set('РеквНаимДок',  'Универсальный передаточный документ')
+    dpod.set('РеквНомерДок', num_int)
+    dpod.set('РеквДатаДок',  _date_short(doc_date))
+
+    # Покупатель
+    sv_pok   = etree.SubElement(sv, 'СвПокуп')
+    pok_id   = etree.SubElement(sv_pok, 'ИдСв')
+    pok_yul  = etree.SubElement(pok_id, 'СвЮЛУч')
+    pok_yul.set('НаимОрг', buyer.get('name', ''))
+    pok_yul.set('ИННЮЛ',   buyer.get('inn', ''))
+    if buyer.get('kpp'):
+        pok_yul.set('КПП', buyer['kpp'])
+    pok_adr  = etree.SubElement(sv_pok, 'Адрес')
+    pok_ainf = etree.SubElement(pok_adr, 'АдрИнф')
+    pok_ainf.set('КодСтр',   '643')
+    pok_ainf.set('НаимСтран', 'РОССИЯ')
+    pok_ainf.set('АдрТекст', buyer.get('address', ''))
 
     # Валюта
-    dop = etree.SubElement(sv, 'ДопСвФХЖ1')
-    dop.set('НаимОКВ', 'Российский рубль')
-    dop.set('КодОКВ',  '643')
-    dop.set('КурсВал', '1.00')
+    den = etree.SubElement(sv, 'ДенИзм')
+    den.set('КодОКВ',  '643')
+    den.set('НаимОКВ', 'Российский рубль')
+    den.set('КурсВал', '1.00')
+
+    # ИнфПолФХЖ1
+    inf1 = etree.SubElement(sv, 'ИнфПолФХЖ1')
+    for ident, val in [
+        ('ИдентификаторДокументаОснования', basis_uuid),
+        ('ВидСчетаФактуры', 'Реализация'),
+        ('ТолькоУслуги', 'false'),
+        ('ДокументОбОтгрузке',
+         f'№ п/п 1 № {num_int} от {_date_short(doc_date)} г.'),
+    ]:
+        ti = etree.SubElement(inf1, 'ТекстИнф')
+        ti.set('Идентиф', ident)
+        ti.set('Значен', val)
 
     # ── ТаблСчФакт ──
+    total_qty = 0
     tabl = etree.SubElement(doc_el, 'ТаблСчФакт')
     for idx, it in enumerate(items, 1):
         st = etree.SubElement(tabl, 'СведТов')
         st.set('НомСтр',      str(idx))
         st.set('НаимТов',     it['name'])
-        if it.get('qty') not in ('', None):
+        qty_val = it.get('qty')
+        if qty_val not in ('', None):
             st.set('ОКЕИ_Тов', '796')
-            st.set('НаимЕд',   str(it.get('unit', 'шт')))
-            st.set('КолТов',   str(it['qty']))
+            st.set('НаимЕдИзм', str(it.get('unit', 'шт')))
+            st.set('КолТов',   str(qty_val))
             st.set('ЦенаТов',  f"{it['price_without_vat']:.2f}")
+            total_qty += int(qty_val) if str(qty_val).isdigit() else 1
         st.set('СтТовБезНДС', f"{it['total_without_vat']:.2f}")
         st.set('НалСт',        config.VAT_LABEL)
         st.set('СтТовУчНал',  f"{it['total_with_vat']:.2f}")
 
-        ak = etree.SubElement(st, 'АкцизТов')
-        etree.SubElement(ak, 'БезАкциза').text = 'без акциза'
+        dop_sv = etree.SubElement(st, 'ДопСведТов')
+        dop_sv.set('ПрТовРаб', str(idx))
 
-        nds = etree.SubElement(st, 'НДС')
-        etree.SubElement(nds, 'СумНДС').text = f"{it['vat_amount']:.2f}"
+        ak = etree.SubElement(st, 'Акциз')
+        etree.SubElement(ak, 'БезАкциз').text = 'без акциза'
+
+        nds_el = etree.SubElement(st, 'СумНал')
+        etree.SubElement(nds_el, 'СумНал').text = f"{it['vat_amount']:.2f}"
+
+        item_uuid = str(uuid.uuid4())
+        for ident, val in [
+            ('Для1С_Идентификатор', f'{item_uuid}##'),
+            ('Для1С_Наименование', it['name']),
+            ('Для1С_ЕдиницаИзмерения', str(it.get('unit', 'шт'))),
+            ('Для1С_ЕдиницаИзмеренияКод', '796'),
+            ('Для1С_СтавкаНДС', '5'),
+            ('ИД', f'{item_uuid}##'),
+        ]:
+            inf2 = etree.SubElement(st, 'ИнфПолФХЖ2')
+            inf2.set('Идентиф', ident)
+            inf2.set('Значен', val)
 
     vsego = etree.SubElement(tabl, 'ВсегоОпл')
     vsego.set('СтТовБезНДСВсего', f"{total_excl:.2f}")
     vsego.set('СтТовУчНалВсего',  f"{total_incl:.2f}")
-    vsego.set('КолЛистов', '1')
-    nds_v = etree.SubElement(vsego, 'НДСВсего')
-    etree.SubElement(nds_v, 'СумНДС').text = f"{total_vat:.2f}"
+    vsego.set('КолНеттоВс',       str(total_qty))
+    nds_v = etree.SubElement(vsego, 'СумНалВсего')
+    etree.SubElement(nds_v, 'СумНал').text = f"{total_vat:.2f}"
 
-    # ── СвПодп ──
-    sv_podp  = etree.SubElement(doc_el, 'СвПодп')
-    podp_ip  = etree.SubElement(sv_podp, 'ПодпИП')
-    podp_ip.set('ДатаПодп', _date_short(doc_date))
-    fio2 = etree.SubElement(podp_ip, 'ФИО')
-    fio2.set('Фамилия',  'Шавкова')
-    fio2.set('Имя',      'Тамара')
-    fio2.set('Отчество', 'Расуловна')
-    sv_ip = etree.SubElement(podp_ip, 'СвИП')
-    sv_ip.set('ОГРНИП',      config.SELLER_OGRNIP)
-    sv_ip.set('ДатаОГРНИП', config.SELLER_OGRNIP_DATE)
-    etree.SubElement(podp_ip, 'ОснПолн').text = 'ИП'
+    # ── СвПродПер ──
+    sv_pp = etree.SubElement(doc_el, 'СвПродПер')
+    sv_per = etree.SubElement(sv_pp, 'СвПер')
+    sv_per.set('СодОпер', 'Товары переданы')
+    sv_per.set('ВидОпер', 'Продажа')
+    sv_per.set('ДатаПер', _date_short(doc_date))
+    etree.SubElement(sv_per, 'БезДокОснПер').text = '1'
+
+    inf3 = etree.SubElement(sv_pp, 'ИнфПолФХЖ3')
+    ti3  = etree.SubElement(inf3, 'ТекстИнф')
+    ti3.set('Идентиф', 'ИдентификаторДокументаОснования')
+    ti3.set('Значен',  basis_uuid)
+
+    # ── Подписант ──
+    podp = etree.SubElement(doc_el, 'Подписант')
+    podp.set('ТипПодпис', '2')
+    podp.set('СпосПодтПолном', '1')
+    fio2 = etree.SubElement(podp, 'ФИО')
+    fio2.set('Фамилия', '-')
+    fio2.set('Имя',     '-')
 
     return etree.tostring(
         root,

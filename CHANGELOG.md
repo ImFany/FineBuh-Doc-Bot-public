@@ -1,5 +1,54 @@
 # Changelog — FineBuh Doc Bot
 
+## [2.1.0] — 2026-05-02
+
+### 📄 Обновлённые шаблоны документов
+
+- **Договор поставки (DOCX)** — заменён программно-генерируемый шаблон на профессиональный юридический документ:
+  - 11 разделов: предмет, порядок поставки, цена/оплата, приёмка, переход права собственности, форс-мажор, споры, конфиденциальность, срок действия, прочее
+  - Форматирование Times New Roman, выравнивание по ширине
+  - Удалён `_build_contract_template()` — шаблон теперь хранится как файл `contract.docx`
+- **XML для ЭДО** — полностью переписан `generate_xml()` по структуре выгрузки 1С:Предприятие 8:
+  - `СвИП` с полными атрибутами (`ИННФЛ`, `СвГосРегИП`, `ОГРНИП`, `ДатаОГРНИП`)
+  - `АдрГАР` с детализацией (регион, район, населённый пункт, улица, здание)
+  - `БанкРекв` вместо `РеквСчет`
+  - `ДокПодтвОтгрНом`, `ИнфПолФХЖ1/2/3`, `ДопСведТов`, `СвПродПер`, `Подписант`
+  - Уникальные UUID для каждой позиции
+
+### ✨ UX-улучшения
+
+- Мгновенная обратная связь: "Обрабатываю позиции..." при отправке данных
+- Фото и документы теперь корректно обрабатываются в FSM (добавлен `F.text` фильтр)
+- Сокращённые названия организаций: ООО, АО, ИП и т.д. в списке пакетов
+- Единое сообщение с файлами: caption на медиа-группе с информацией о покупателе, количестве позиций и сумме
+
+### 🔒 Безопасность (v2.0.1)
+
+- Удалены захардкоженные credentials из `deploy.py` — переход на SSH-ключи и `.env.local`
+- Input validation перед Gemini (MAX_INPUT_LENGTH, MAX_LINES, PRICE_LIMIT)
+- Output validation: `validate_parsed_invoice()` проверяет ответ Gemini
+- SQLite: context managers, WAL-режим, `busy_timeout`, `synchronous=NORMAL`
+- Retention policy: `expires_at` в таблицах `buyers`, `invoices`, `packages`
+- Маскирование банковских реквизитов в логах
+
+### 🐛 Исправления
+
+- Gemini JSON parsing: `_safe_parse_json()` с `raw_decode()` для обработки trailing data
+- `cursor.rowcount` вместо `connection.rowcount` в `cleanup_expired()`
+- Добавлены недостающие константы в `config.py` (RETENTION_DAYS_*, MAX_INPUT_LENGTH)
+
+### 📝 Файлы изменены
+
+- `bot/generator.py` — новый contract DOCX, переписан XML
+- `bot/main.py` — UX: feedback, F.text filters, short org names, media group caption
+- `bot/parser.py` — `_safe_parse_json()`, input/output validation
+- `bot/db.py` — context managers, PRAGMA, retention policy
+- `bot/config.py` — validation и retention константы
+- `bot/templates/contract.docx` — новый шаблон договора
+- `deploy.py` — SSH-ключи вместо паролей
+
+---
+
 ## [2.0.0] — 2026-05-01
 
 ### 🔄 Миграция AI: OpenAI → Google Gemini

@@ -834,19 +834,7 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
         log.exception("XML error")
         errors.append(f"XML: {e}")
 
-    # ── Отправка одним постом ──
-    try:
-        await status.delete()
-    except Exception:
-        pass
-
-    if media:
-        await message.answer_media_group(media)
-
-    if errors:
-        await message.answer("⚠️ Ошибки при генерации:\n" + '\n'.join(errors))
-
-    # ── Сохранение в БД ──
+    # ── Сохранение в БД (до отправки, чтобы pkg_id попал в caption) ──
     pkg_id = None
     total = sum(float(i['price']) * float(i.get('qty') or 1) for i in items) + float(delivery)
     try:
@@ -860,16 +848,38 @@ async def _send_docs(message: Message, state: FSMContext, from_user_id: int | No
     except Exception as e:
         log.exception("DB save error: %s", e)
 
-    # ── Итоговое сообщение со сводкой ──
+    # ── Caption для первого файла ──
     buyer_name = _short_org_name(buyer.get('name', '')) or f"ИНН {buyer.get('inn', '—')}"
-    lines = [
+    caption_lines = [
         f"📦 *Пакет {doc_number}*",
-        f"Покупатель: {buyer_name}",
-        f"Позиций: {len(items)}, сумма: {total:,.2f} руб.",
+        f"👤 {buyer_name}",
+        f"📋 Позиций: {len(items)}, сумма: {total:,.2f} руб.",
+        "",
+        "📄 Счёт на оплату",
+        "📄 УПД Статус 1",
+        "📝 Договор поставки",
+        "🗂 XML для ЭДО",
     ]
     if pkg_id:
-        lines.append(f"`/edit_package {pkg_id}` — повторная генерация")
-    await message.answer('\n'.join(lines), parse_mode=ParseMode.MARKDOWN)
+        caption_lines.append(f"\n`/edit_package {pkg_id}` — повторная генерация")
+    if media:
+        media[0] = InputMediaDocument(
+            media=media[0].media,
+            caption='\n'.join(caption_lines),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    # ── Отправка одним постом ──
+    try:
+        await status.delete()
+    except Exception:
+        pass
+
+    if media:
+        await message.answer_media_group(media)
+
+    if errors:
+        await message.answer("⚠️ Ошибки при генерации:\n" + '\n'.join(errors))
 
 
 # ═══════════════════════════════════════════════════════════════
